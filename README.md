@@ -1,8 +1,6 @@
-### Exploration Anaylsis for the Capstone Dataset
-
 ### Background
 
-In this capstone project we attempt to build a predictive test models like those used by SwiftKey. This report contains the exploratory analsys of the dataset provided by coursera.
+A sample restful web service performance benchmarking utility that I wrote a few years back for a take home interview of cloud storage startup. 
 
 ### Problem Statement 
 *Performance Tool Problem*
