@@ -1,0 +1,32 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace PerfTool
+{
+    public static class StatisticsExtension
+    {
+        /// <summary>
+        /// Get the Variance of a IEnuermable series of int
+        /// </summary>
+        /// <param name="source">The source.</param>
+        /// <returns></returns>
+        public static double Variance(this IEnumerable<long> source)
+        {
+            double avg = source.Average();
+            double d = source.Aggregate(0.0, (total, next) => total += Math.Pow(next - avg, 2));
+            return d / (source.Count() - 1);
+        }
+
+        /// <summary>
+        /// Get the Standard deviation of a IEnuermable series of int
+        /// </summary>
+        /// <param name="source">The source.</param>
+        /// <returns></returns>
+        public static double StandardDeviation(this IEnumerable<long> source)
+        {
+            return Math.Sqrt(source.Variance());
+        }
+
+    }
+}

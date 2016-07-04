@@ -1,0 +1,333 @@
+﻿using System;
+using System.IO;
+using System.Diagnostics;
+using System.Collections.Generic;
+using System.Collections;
+using System.Linq;
+using System.Text;
+using System.Net;
+using System.Xml;
+using System.Xml.Linq;
+using System.Threading;
+
+
+namespace PerfTool
+{
+    /// <summary>
+    /// This class implement the web service test for the following RESTful web serivce: 
+    /// 
+    /// A RESTful web service defines the following protocol for uploading a large file (based on Amazon’s S3 multipart upload API):
+    /// 1.     POST /ObjectName?uploads
+    /// a.     No body content.
+    /// 2.     PUT /ObjectName?partNumber=PartNumber&uploadId=UploadId
+    /// a.     The body contains the content of the part.
+    /// 3.     POST /ObjectName?uploadId=UploadId
+    /// a.     No body content.
+    /// 
+    /// </summary>
+    public class UploadWebServiceTest
+    {
+        /// <summary>
+        /// Gets or sets the base url
+        /// </summary>
+        public static string BaseUrl = "http://localserver";
+
+        /// <summary>
+        /// Gets or sets the prefix name of object to upload
+        /// </summary>
+        public static string Name = "SomeObject";
+        
+        /// <summary>
+        /// Gets or sets the num threads.
+        /// </summary>
+        /// <value>
+        /// The num threads.
+        /// </value>
+        public int NumThreads { get; set; }
+
+        /// <summary>
+        /// Gets or sets the num chunks.
+        /// </summary>
+        /// <value>
+        /// The num chunks.
+        /// </value>
+        public int NumChunks { get; set; }
+
+        /// <summary>
+        /// Gets or sets the size of the chunk.
+        /// </summary>
+        /// <value>
+        /// The size of the chunk.
+        /// </value>
+        public int ChunkSize { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether chunk buffer pattern is randomized 
+        /// </summary>
+        /// <value>
+        /// 	<c>true</c> if this instance is randomize chunk pattern; otherwise, <c>false</c>.
+        /// </value>
+        public bool isRandomizeChunkPattern { get; set; }
+
+        private List<long> chunkUploadStatistics = new List<long> (); 
+
+        /// <summary>
+        /// inner class to store the chunkState, use for passing state data into ThreadPool thread
+        /// </summary>
+        public class ChunkState
+        {
+            public string UploadId;
+            public int ChunkNum;
+
+            public ChunkState(string uploadId, int num)
+            {
+                UploadId = uploadId;
+                ChunkNum = num;
+            }
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="UploadWebServiceTest"/> class.
+        /// </summary>
+        /// <param name="numThreads">The num threads.</param>
+        /// <param name="numChunks">The num chunks.</param>
+        /// <param name="chunkSize">Size of the chunk.</param>
+        public UploadWebServiceTest (int numThreads, int numChunks, int chunkSize) 
+        {
+            NumThreads = numThreads;
+            NumChunks = numChunks;
+            ChunkSize = chunkSize;
+        }
+
+        /// <summary>
+        /// Runs the test.
+        /// </summary>
+        public void RunTest()
+        {
+            // Prepare Threadpool for multi-threaded multipart uploads
+            int workerThreads, completionPortThreads;
+            ThreadPool.GetMaxThreads(out workerThreads, out completionPortThreads);
+            ThreadPool.SetMaxThreads(NumThreads, completionPortThreads);
+            try
+            {
+                Stopwatch timer = new Stopwatch();
+                HttpWebRequest request = null;
+                HttpWebResponse response = null;
+                string uploadId = null;
+                string url = String.Format("{0}/{1}", BaseUrl, Name);
+
+                // initial call to get upload id 
+                //
+                Dictionary<string, string> parameters = new Dictionary<string, string>();
+                parameters.Add("Uploads", null);
+                request = GetRequest("POST", url, parameters, null);
+                timer.Start();
+                // Comment out for testing purpose
+                // response = ProcessRequest(request);
+                // uploadId = ReadUploadIDFromResponse(response);
+                // comment out below, for testing purpose
+                uploadId = "VXBsb2FkIElEIGZvciA2aWWpbmcncyBteS1tb3ZpZS5tMnRzIHVwbG9hZA";
+                timer.Stop();
+                Console.WriteLine("Upload initialization request: {0}", timer.ElapsedMilliseconds);
+                timer.Reset();
+                parameters.Remove("Uploads");
+
+                // perform actual upload, use threadpool to submit multi-upload at the same time
+                //
+                ManualResetEvent[] handles = new ManualResetEvent[NumChunks];
+                for (int i = 0; i < NumChunks; i++)
+                {
+                    ChunkState chunkState = new ChunkState(uploadId, i);
+                    handles[i] = new ManualResetEvent(false);
+                    ManualResetEvent curHandle = handles[i];
+                    ThreadPool.QueueUserWorkItem(x =>
+                        {
+                            DoUploadChunk(chunkState);
+                            curHandle.Set();
+                        }
+                    );
+                }
+                // wait for all chunk upload tasks to complete
+                WaitHandle.WaitAll(handles);
+
+                // submit upload completion request
+                //
+                parameters.Add("UploadId", uploadId);
+                request = GetRequest("POST", url, parameters, null);
+                timer.Start();
+                // Comment out for testing purpose
+                // response = ProcessRequest(request);
+                timer.Stop();
+                Console.WriteLine("Upload Completion request: {0}", timer.ElapsedMilliseconds);
+                timer.Reset();
+
+                Console.WriteLine("Chunk data statistics:");
+                foreach (long stat in chunkUploadStatistics)
+                {
+                    Console.Write(stat + "\t");
+                }
+                Console.Write("Mean: {0}, Max: {1}, Min: {2}, Variance: {3}, StdDev: {4}", 
+                    chunkUploadStatistics.Average(), 
+                    chunkUploadStatistics.Max(),
+                    chunkUploadStatistics.Min(),
+                    chunkUploadStatistics.Variance(),
+                    chunkUploadStatistics.StandardDeviation());
+
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("\nException Caught!");
+                Console.WriteLine("Message :{0} ", e.Message);
+                Console.WriteLine("Callstack :{0} ", e.StackTrace);
+            }
+            finally
+            {  // ensure Threadpool default setting restore upon exit
+                ThreadPool.SetMaxThreads(workerThreads, completionPortThreads);
+            }
+        }
+
+        public void DoUploadChunk(object stateInfo)
+        {
+            ChunkState chunkState = (ChunkState)stateInfo;
+            Stopwatch timer = new Stopwatch();
+            string url = String.Format("{0}/{1}", BaseUrl, Name);
+            Dictionary<string, string> parameters = new Dictionary<string, string>();
+            parameters.Add("partNumber", chunkState.ChunkNum.ToString());
+            parameters.Add("uploadId", chunkState.UploadId);
+            string postData = GenChunkData(ChunkSize, isRandomizeChunkPattern);
+            HttpWebRequest request = GetRequest("PUT", url, parameters, postData);
+            Console.WriteLine("Thread {0} start....: {1}", chunkState.ChunkNum, request.Address);
+            timer.Start();
+            // Comment out for testing purpose
+            // response = ProcessRequest(request);
+            Random rnd = new Random();
+            Thread.Sleep(rnd.Next(5000));
+            timer.Stop();
+            Console.WriteLine("Chunk upload{0} request: {1}", chunkState.ChunkNum, timer.ElapsedMilliseconds);
+            chunkUploadStatistics.Add(timer.ElapsedMilliseconds);
+            Console.WriteLine("Thread {0} end....", chunkState.ChunkNum);
+
+            timer.Reset();
+        }
+
+        /// <summary>
+        /// Gets the request.
+        /// </summary>
+        /// <param name="methodType">Type of the method.</param>
+        /// <param name="uri">The URI.</param>
+        /// <param name="parameters">The parameters.</param>
+        /// <param name="postData">The post data.</param>
+        /// <returns></returns>
+        private HttpWebRequest GetRequest(string methodType, string uri, Dictionary<string, string> parameters, 
+            string postData)
+        {
+            string query = String.Empty;
+            if (parameters != null && parameters.Count != 0)
+            {
+                query = CreateRequestString(parameters);
+            }
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(String.Format("{0}?{1}", uri, query));
+            request.Method = "GET";
+            ASCIIEncoding encoding = new ASCIIEncoding();
+            if (methodType.Equals("POST"))
+            {
+                string chunkData = GenChunkData(ChunkSize, isRandomizeChunkPattern);
+                byte[] chunkBytes = encoding.GetBytes(chunkData);
+                request.ContentLength = chunkBytes.Length;
+            }
+            
+            return request;
+        }
+
+        /// <summary>
+        /// Creates the request string.
+        /// </summary>
+        /// <param name="parameters">The parameters.</param>
+        /// <returns></returns>
+        private static string CreateRequestString(Dictionary<string, string> parameters)
+        {
+            StringBuilder builder = new StringBuilder();
+            const string keyValuePairSeparator = "&";
+            const string keyValueSeparator = "=";
+            int count = 0;
+
+            foreach (KeyValuePair<string,string> kvp  in parameters)
+            {
+                count++;
+                if (!String.IsNullOrEmpty(kvp.Value))
+                {
+                    builder.AppendFormat("{0}{1}{2}", kvp.Key, keyValueSeparator, kvp.Value);
+                }
+                else
+                {
+                    builder.AppendFormat("{0}", kvp.Key);
+                }
+                if (count != parameters.Keys.Count)
+                    builder.Append(keyValuePairSeparator);
+            }
+
+            return builder.ToString();
+        }
+
+        /// <summary>
+        /// Processes the request and return a response
+        /// </summary>
+        /// <param name="request">The request.</param>
+        /// <returns></returns>
+        private HttpWebResponse ProcessRequest(HttpWebRequest request)
+        {
+            try
+            {
+                HttpWebResponse response = (HttpWebResponse)request.GetResponse();
+                return response;
+            }
+            catch (Exception ex)
+            {
+                Exception exception = new ApplicationException(String.Format("Request failed for Url: {0}", request.RequestUri), ex);
+                throw exception;
+            }
+        }
+
+        /// <summary>
+        /// Reads the response into string
+        /// </summary>
+        /// <param name="response">The response.</param>
+        /// <returns></returns>
+        private static string ReadUploadIDFromResponse(HttpWebResponse response)
+        {
+            XDocument doc;
+            using (Stream responseStream = response.GetResponseStream())
+            {
+                doc = XDocument.Load(responseStream);
+            }
+            XNamespace ns = doc.Root.Name.Namespace;
+            string uploadId = doc.Root.Element(ns + "InitiateMultipartUploadResult").Element(ns + "UploadId").Value;
+            return uploadId;
+        }
+
+        /// <summary>
+        /// Gets the chunk data.
+        /// </summary>
+        /// <param name="size">The size.</param>
+        /// <param name="randomizePattern">if set to <c>true</c> [randomize pattern].</param>
+        /// <returns></returns>
+        private static string GenChunkData(int size, bool randomizePattern)
+        {
+            String returnData = null;
+            if (randomizePattern != true)
+            {
+                returnData = new String('c', size);
+            }
+            else
+            {
+                Random random = new Random();
+                Byte[] b = new Byte[size];
+                random.NextBytes(b);
+                returnData = b.ToString();
+            }
+            return returnData;
+        }
+
+
+    }
+}

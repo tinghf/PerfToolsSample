@@ -1,0 +1,55 @@
+Design overview: 
+
+The program will be able to gauge performance benchmark for a multi-part upload RESTful web service, it should be flexible enough to gather statistics across different dimensions we are interested to explored: 
+	- Size of uploads (total size);
+	- No. of chunks; 
+	- Concurrent upload performance; 
+	- Content of different type (doesn't seem like it would impact performance but let's provide a way to vary the type of data generated); 
+The performance metrics we are interested to gathered: 
+	- Environment info (number of clients we are running, number of upload tasks on each client, number of chunk per each upload tasks); 
+	- Total time spent for each upload;
+	- Time spent for each chunk; 
+	- Min/Max/Mean time and Variation across each chunk (provided as min/max/mean and standard deviation of upload time); 
+The program will be split into the following components;
+	- A command line interface frontend to handle the argument passing; 
+	- A perf test execution engine which will focus on execution upload tasks;
+	- Optionally, some performance gathering modules on the server side (both the web service and the database back end where the chunk data are stored) to gather the perf from the server;
+
+
+Non-goal: 
+The program will be focus on gathering performance aspect of the web service, functional correctness will not be touched. 
+
+Precautions: 
+	- The tools should be run on machine where the web service nor the back end database is hosted, client(test client) and server should be separated to avoid interference of test load with web service performance; 
+	- We are not interested at perf metrics of client machine, but we should ensure that the system under test should be the web service, but not the test client.  We should have some way to ensure the test client machine is not maxed up (memory/network/cpu-wise) while running the test; 
+	
+
+Program input: 
+	- Number of clients to simulated;
+	- Number of uploads (pass/total);
+	- Size of each upload; 
+	- Number of chunks (per upload);
+	- Way to assign generate pattern/randomize chunk data uploaded
+	- Optional but nice to have, have a way for the program to explore a range of parameters (instead of requiring user to invoke it again and again for different input combinations), for example measure the time for uploading a chunk of (500MB, 1GB, 2GB, 4GB) with chunk size of (1MB, 2MB, 4MB, ¡K 64MB); 
+	- Warm up time:  the program should allow the service to "warm up", therefore run some chunk upload load for a certain amount of time (say  30secs) for the web services to initialize any programming structures/caches in the background, before taking statistics,  a default is probably good enough but it's nice to have a way to alter that(say warm_up_load=30s);  in addition with a switch like this it allow us to measure metrics of "warm" service against "cold" service;
+	- Noise generation:  Would any invalid response affect the web service at all? It would be nice to have some way to generate some sort of noise/garbage input (say unsupported verbs,  invalid PartNumber/UploadId,  empty body for multipartUpload,¡K etc); 
+	
+	
+Program output: 
+     -    ability to gather test environment (OS Ver/CPU/Memory/Network/disk space¡K etc), on both server/client side;  
+	- Requests/sec; 
+	- Throughput (inferred from chunk data size, and Requests/Sec);
+	- Time spent/chunk; 
+	- Total time spent/request;
+
+Additional we should run some performance monitoring tools on the server side to obtains statistics like: 
+	- CPU%(Total/WebService)
+	- Memory consumption 
+	- Network usage 
+	- Disk activity (probably on the DB backend as well) 
+	
+
+Some other improvements: 
+	- Have a controller-driver model which allow us to drive the execution of the program on different physical machines, this allow us to hugely improve our perf/stress testing scenario to include things like concurrent user uploads;
+	- Measure error rates, in this exercise I assume all upload is successful (and throw if not), in practice this is probably not the case, would be nice to have a way to handle Error rate calculation;
+

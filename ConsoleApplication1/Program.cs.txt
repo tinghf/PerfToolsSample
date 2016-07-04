@@ -1,0 +1,156 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+// support library for command line parsing
+using MattRaffelNetCode.ApplicationSupport;
+
+namespace PerfTool
+{
+    class Program
+    {
+        private ApplicationCommandLine _cmdProcessor = new ApplicationCommandLine();
+
+        /// <summary>
+        /// main entry point
+        /// </summary>
+        /// <param name="args">The args.</param>
+        static void Main(string[] args)
+        {
+            Program program = new Program();
+            program.InitializeArguments();
+            program.Run(args);
+        }
+
+        /// <summary>
+        /// Initializes the arguments.
+        /// </summary>
+        public void InitializeArguments()
+        {
+            // create the help argument
+            _cmdProcessor.AddArg(new CommandLineArgument("?", "prints help"));
+            _cmdProcessor.AddArg(new DataCommandLineArgument("u", "the number of uploads to perform"));
+            _cmdProcessor.AddArg(new DataCommandLineArgument("n", "the number of chunk to divide into"));
+            _cmdProcessor.AddArg(new DataCommandLineArgument("s", "the size of each chunk(KB)"));
+            _cmdProcessor.AddArg(new DataCommandLineArgument("t", "the number of threads to use(if > # uploads will just reset to # uploads"));
+            _cmdProcessor.AddArg(new CommandLineArgument("r", "randomize data, if not set we will just use fixed data"));
+        }
+
+        /// <summary>
+        /// Run program with the specified args.
+        /// </summary>
+        /// <param name="args">The args.</param>
+        public void Run(string[] args)
+        {
+            // always say something about us
+            PrintHeader();
+
+            try
+            {
+                // parse the command line 
+                _cmdProcessor.ParseCmdLineToArgs(args);
+
+                // convert the command line data to something for the program
+                ArgsToProgramData();
+
+            }
+
+            catch (MattRaffelNetCode.ApplicationSupport.CommandlineException cmdError)
+            {
+                Console.WriteLine(cmdError.Message);
+                Console.WriteLine("try Test /? for help");
+            }
+            catch (Exception error)
+            {
+                Console.WriteLine("this wasnt meant to happen");
+                Console.WriteLine(error.Message);
+                Console.WriteLine(error.StackTrace);
+            }
+            finally
+            {
+            }
+
+        }
+
+        /// <summary>
+        /// Prints a standard header info about the Test tool
+        /// </summary>
+        private void PrintHeader()
+        {
+            Console.WriteLine();
+            Console.WriteLine("PerfTool 0.1 - tool for testing RESTful web service");
+            Console.WriteLine();
+        }
+
+        /// <summary>
+        /// prints help to the console
+        /// </summary>
+        private void PrintHelp()
+        {
+            // output some help
+            foreach (CommandLineArgument argument in _cmdProcessor)
+            {
+                Console.WriteLine("-{0}   {1}", argument.Argument, argument.ToString());
+            }
+            // print Sample
+            Console.WriteLine(String.Format(
+@"
+For example, to perform a upload requests of 100, each with 20 5KB fragments, using 10 threads: 
+
+    {0} -u 100 -n 10 -s 5 -t 10", Environment.GetCommandLineArgs()[0]));
+        }
+
+        /// <summary>
+        /// For each of the CommandLineArgument instances that have been selected 
+        /// (including any defaults not changed from the commandline input)
+        /// convert those into program data that will be used by the Run method
+        /// to perform the functions requested
+        /// </summary>
+        private void ArgsToProgramData()
+        {
+            int numThreads = 0;
+            int numChunks = 0;
+            int chunkSize = 0;
+            int numUploads = 0;
+            bool randomizeData = false;
+
+            foreach (CommandLineArgument argument in _cmdProcessor)
+            {
+                if (true == argument.Selected)
+                {
+                    char ch = argument.Argument.ToString().ToCharArray()[0];
+                    switch (ch)
+                    {
+                        case 't':
+                            numThreads = Int32.Parse((argument as DataCommandLineArgument).Data);
+                            break;
+                        case 'n':
+                            numChunks = Int32.Parse((argument as DataCommandLineArgument).Data);
+                            break;
+                        case 's':
+                            chunkSize = Int32.Parse((argument as DataCommandLineArgument).Data);
+                            break;
+                        case 'u':
+                            numUploads = Int32.Parse((argument as DataCommandLineArgument).Data);
+                            break;
+                        case 'r':
+                            randomizeData = true;
+                            break;
+                        case '?':
+                            PrintHelp();
+                            Environment.Exit(0);
+                            break;
+                        default:
+                            throw new Exception(String.Format("found an weird arugment {0}", ch));
+
+                    }
+                }
+            }
+            UploadWebServiceTest webServiceTest = new UploadWebServiceTest(numThreads, numChunks, chunkSize);
+            webServiceTest.isRandomizeChunkPattern = randomizeData;
+            webServiceTest.RunTest();
+        }
+
+
+    }
+}
